@@ -12,4 +12,4 @@ kaleido==0.1.0.post1; platform_system == "Windows"
 instructor==1.8.3
 plotly
 ifcopenshell
-pdfminer.six>=20231018
+openai-agents

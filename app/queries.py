@@ -90,6 +90,28 @@ query GetFileUrn($exchangeId: ID!) {
 """
 
 
+GET_ELEMENTS_WITH_FILTER = """
+query GetElementsWithFilter(
+  $exchangeId: ID!
+  $elementFilter: ElementFilterInput
+  $elementPagination: PaginationInput
+) {
+  exchange(exchangeId: $exchangeId) {
+    id
+    name
+    elements(filter: $elementFilter, pagination: $elementPagination) {
+      pagination { pageSize cursor }
+      results {
+        id
+        name
+        properties { results { name value } }
+      }
+    }
+  }
+}
+"""
+
+
 DX_GRAPHQL_URL = "https://developer.api.autodesk.com/dataexchange/2023-05/graphql"
 APS_REGION = os.environ.get("APS_REGION", "")
 

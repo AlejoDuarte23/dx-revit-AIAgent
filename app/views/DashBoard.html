@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>DX Dashboard</title>
+	<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+	<style>
+		html, body { height: 100%; margin: 0; }
+		body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+		.grid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			grid-template-rows: 1fr 1fr;
+			gap: 12px;
+			height: 100%;
+			padding: 12px;
+			box-sizing: border-box;
+			background: #fafafa;
+		}
+		.panel {
+			background: #fff;
+			border: 1px solid #e9e9e9;
+			border-radius: 10px;
+			box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+			padding: 8px;
+			min-height: 320px;
+		}
+		.title {
+			font-weight: 600;
+			margin: 4px 8px 0;
+		}
+		.chart { width: 100%; height: calc(100% - 26px); }
+	</style>
+</head>
+<body>
+	<div class="grid">
+		<div class="panel">
+			<div class="title">Volume share (%)</div>
+			<div id="pieVol" class="chart"></div>
+		</div>
+		<div class="panel">
+			<div class="title">Volumes (m³)</div>
+			<div id="barVol" class="chart"></div>
+		</div>
+		<div class="panel">
+			<div class="title">Element count share (%)</div>
+			<div id="pieCount" class="chart"></div>
+		</div>
+		<div class="panel">
+			<div class="title">Element counts</div>
+			<div id="barCount" class="chart"></div>
+		</div>
+	</div>
+
+	<script>
+		// Placeholders to be replaced by backend with JSON strings (e.g., '["A","B"]', '[1,2]', '[10.5, 3.2]').
+		// If not replaced, fallback sample data will be used.
+		var NAMES_JSON = 'NAMES_PLACEHOLDER';
+		var COUNTS_JSON = 'COUNTS_PLACEHOLDER';
+		var VOLUMES_JSON = 'VOLUMES_PLACEHOLDER';
+
+		var DEBUG_DASH = true;
+		function dlog(){ if (!DEBUG_DASH) return; var a=[].slice.call(arguments); a.unshift('[Dashboard]'); console.log.apply(console,a); }
+
+		// Optional: legacy placeholders to keep a consistent pattern (not used here)
+		// var ACCESS_TOKEN = 'APS_TOKEN_PLACEHOLDER';
+		// var DOCUMENT_URN = 'urn:URN_PLACEHOLDER';
+		// var FILTER_ELEMENT = 'FILTER_ELEMENT_PLACEHOLDER';
+
+		dlog('Raw placeholders', { NAMES_JSON, COUNTS_JSON, VOLUMES_JSON });
+
+		function tryParse(json, fallback) {
+			try {
+				// Consider unreplaced placeholders as not JSON
+			if (typeof json !== 'string') { dlog('Non-string JSON value, using fallback'); return fallback; }
+			if (json.indexOf('PLACEHOLDER') !== -1) { dlog('Placeholder not replaced, using fallback'); return fallback; }
+				var v = JSON.parse(json);
+			if (!Array.isArray(v)) { dlog('Parsed value not array, using fallback'); return fallback; }
+			return v;
+			} catch (e) {
+			console.warn('[Dashboard] Failed to parse JSON, using fallback', e);
+				return fallback;
+			}
+		}
+
+		// Sensible fallback sample data
+		var fallbackNames = [
+			'Bearing Footing - 900 x 300',
+			'Insitu Concrete',
+			'600 x 600 x 900mm',
+			'400 x 400 x 900mm'
+		];
+		var fallbackCounts = [4, 2, 8, 6];
+		var fallbackVolumes = [14.5638, 79.0770, 0.8640, 0.8640];
+
+		var names = tryParse(NAMES_JSON, fallbackNames);
+		var counts = tryParse(COUNTS_JSON, fallbackCounts);
+		var volumes = tryParse(VOLUMES_JSON, fallbackVolumes);
+		dlog('Parsed arrays (pre-align)', { names, counts, volumes });
+
+		// Align lengths
+		(function alignLengths(){
+			var n = Math.min(names.length, counts.length, volumes.length);
+					if (n < names.length || n < counts.length || n < volumes.length) {
+						console.warn('[Dashboard] Input arrays have different lengths. Truncating to', n);
+					}
+			names = names.slice(0, n);
+			counts = counts.slice(0, n).map(Number);
+			volumes = volumes.slice(0, n).map(Number);
+		})();
+				dlog('Arrays (post-align)', { names_len: names.length, counts_len: counts.length, volumes_len: volumes.length });
+
+		// Build a stable color map per name (guard Plotly internals across versions)
+		var baseColors = (typeof Plotly !== 'undefined' && Plotly.Colors && Plotly.Colors.qualitative && Plotly.Colors.qualitative.Plotly)
+					  || (typeof Plotly !== 'undefined' && Plotly.d3 && Plotly.d3.schemeTableau10)
+					  || ['#4e79a7','#f28e2c','#e15759','#76b7b2','#59a14f','#edc949','#af7aa1','#ff9da7','#9c755f','#bab0ab'];
+		var colorMap = {};
+		for (var i = 0; i < names.length; i++) colorMap[names[i]] = baseColors[i % baseColors.length];
+		var colors = names.map(function(n){ return colorMap[n]; });
+
+		function sum(arr){ return arr.reduce(function(a,b){ return a + (Number(b) || 0); }, 0); }
+		var totalVol = sum(volumes);
+		var totalCnt = sum(counts);
+		dlog('Totals', { totalVol, totalCnt });
+
+		function formatPct(x){ return (x * 100).toFixed(1) + '%'; }
+		function formatVol(x){ return (Number(x) || 0).toFixed(4); }
+
+		// Pie: Volume share
+		var pieVolTrace = {
+			type: 'pie',
+			labels: names,
+			values: volumes,
+			marker: { colors: colors },
+			sort: false,
+			textinfo: 'label+percent',
+			textposition: 'auto',
+			hovertemplate: '%{label}<br>Volume: %{value:.4f} m³<br>% of total: %{percent}<extra></extra>'
+		};
+		var pieVolLayout = {
+			margin: { l: 10, r: 10, t: 10, b: 10 },
+			showlegend: false
+		};
+
+		// Pie: Count share
+		var pieCntTrace = {
+			type: 'pie',
+			labels: names,
+			values: counts,
+			marker: { colors: colors },
+			sort: false,
+			textinfo: 'label+percent',
+			textposition: 'auto',
+			hovertemplate: '%{label}<br>Count: %{value}<br>% of total: %{percent}<extra></extra>'
+		};
+		var pieCntLayout = {
+			margin: { l: 10, r: 10, t: 10, b: 10 },
+			showlegend: false
+		};
+
+		// Bars: Volumes
+		var barVolTrace = {
+			type: 'bar',
+			x: names,
+			y: volumes,
+			marker: { color: colors },
+			hovertemplate: '%{x}<br>Volume: %{y:.4f} m³<extra></extra>',
+			text: volumes.map(formatVol),
+			textposition: 'auto'
+		};
+		var barVolLayout = {
+			margin: { l: 50, r: 10, t: 10, b: 80 },
+			xaxis: { tickangle: -20, automargin: true },
+			yaxis: { title: 'm³', rangemode: 'tozero' },
+			bargap: 0.2
+		};
+
+		// Bars: Counts
+		var barCntTrace = {
+			type: 'bar',
+			x: names,
+			y: counts,
+			marker: { color: colors },
+			hovertemplate: '%{x}<br>Count: %{y}<extra></extra>',
+			text: counts.map(function(c){ return String(c); }),
+			textposition: 'auto'
+		};
+		var barCntLayout = {
+			margin: { l: 50, r: 10, t: 10, b: 80 },
+			xaxis: { tickangle: -20, automargin: true },
+			yaxis: { title: 'count', rangemode: 'tozero' },
+			bargap: 0.2
+		};
+
+			var config = { displayModeBar: false, responsive: true };
+			try {
+				if (typeof Plotly === 'undefined') throw new Error('Plotly not loaded');
+				if (!names.length) dlog('No data to plot (names empty)');
+				Plotly.newPlot('pieVol', [pieVolTrace], pieVolLayout, config);
+				dlog('Rendered pieVol');
+				Plotly.newPlot('barVol', [barVolTrace], barVolLayout, config);
+				dlog('Rendered barVol');
+				Plotly.newPlot('pieCount', [pieCntTrace], pieCntLayout, config);
+				dlog('Rendered pieCount');
+				Plotly.newPlot('barCount', [barCntTrace], barCntLayout, config);
+				dlog('Rendered barCount');
+			} catch (e) {
+				console.error('[Dashboard] Render error:', e);
+			}
+
+		// Handle resize
+			window.addEventListener('resize', function(){
+				try {
+					Plotly.Plots.resize(document.getElementById('pieVol'));
+					Plotly.Plots.resize(document.getElementById('barVol'));
+					Plotly.Plots.resize(document.getElementById('pieCount'));
+					Plotly.Plots.resize(document.getElementById('barCount'));
+				} catch (e) {
+					dlog('Resize error (likely before render):', e);
+				}
+			});
+	</script>
+</body>
+</html>

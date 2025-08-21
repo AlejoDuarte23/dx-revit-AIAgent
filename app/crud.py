@@ -10,6 +10,7 @@ from app.queries import (
     GET_FOLDER_CONTENT,
     GET_ELEMENTS_CATEGORIES,
     GET_EXCHANGE_FILE_URN,
+    GET_ELEMENTS_WITH_FILTER,
 )
 
 # Parsers
@@ -92,7 +93,7 @@ def get_elements_categories(
     token: str,
     exchange_id: str,
     *,
-    page_size: int = 200,
+    page_size: int = 1000,
 ) -> dict[str, str | None]:
     """Return a mapping of element id -> category for a given exchange.
 
@@ -122,6 +123,93 @@ def get_exchange_file_urn(token: str, exchange_id: str) -> str | None:
     print(data)
     return parse_exchange_file_urn(data)
 
+
+# ---- Filter builders and element retrieval helpers ----
+def _dx_quote_single(val: str) -> str:
+    v = (val or "").strip()
+    v = v.replace("'", "\\'")
+    return f"'{v}'"
+
+
+def _property_lhs(property_name: str) -> str:
+    name = (property_name or "").strip()
+    # If name includes whitespace or special chars, quote the whole token as
+    # 'property.name.Family Name'
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        name = name.replace("'", "\\'")
+        return f"'property.name.{name}'"
+    return f"property.name.{name}"
+
+
+def build_property_equals_filter(property_name: str, value: str) -> str:
+    return f"{_property_lhs(property_name)}=={_dx_quote_single(value)}"
+
+
+def build_metadata_name_equals_filter(value: str) -> str:
+    return f"metadata.name=={_dx_quote_single(value)}"
+
+
+def _parse_elements_with_properties_page(data: dict) -> tuple[list[dict], str | None]:
+    els = data.get("exchange", {}).get("elements", {}) or {}
+    cursor = (els.get("pagination") or {}).get("cursor")
+    results = els.get("results") or []
+    return results, cursor
+
+
+def get_elements_with_filter(
+    token: str,
+    exchange_id: str,
+    *,
+    filter_query: str,
+    page_size: int = 200,
+) -> list[dict]:
+    all_results: list[dict] = []
+    cursor: str | None = None
+    while True:
+        variables = {
+            "exchangeId": exchange_id,
+            "elementFilter": {"query": filter_query},
+            "elementPagination": {"limit": page_size, "cursor": cursor or ""},
+        }
+        data = execute_graphql_query(GET_ELEMENTS_WITH_FILTER, token, variables)
+        print(data)
+        page, cursor = _parse_elements_with_properties_page(data)
+        all_results.extend(page)
+        if not cursor:
+            break
+    return all_results
+
+
+def get_elements_by_property_name(
+    token: str,
+    exchange_id: str,
+    *,
+    property_name: str,
+    value: str,
+    page_size: int = 200,
+) -> list[dict]:
+    return get_elements_with_filter(
+        token,
+        exchange_id,
+        filter_query=build_property_equals_filter(property_name, value),
+        page_size=page_size,
+    )
+
+
+def get_elements_by_metadata_name(
+    token: str,
+    exchange_id: str,
+    *,
+    metadata_name: str,
+    page_size: int = 200,
+) -> list[dict]:
+    return get_elements_with_filter(
+        token,
+        exchange_id,
+        filter_query=build_metadata_name_equals_filter(metadata_name),
+        page_size=page_size,
+    )
 
 # Async counterparts used by orchestrator
 async def get_hubs_async(token: str, *, client: httpx.AsyncClient | None = None) -> list[DXHub]:
@@ -188,3 +276,64 @@ async def get_exchange_file_urn_async(
         GET_EXCHANGE_FILE_URN, token, {"exchangeId": exchange_id}, client=client
     )
     return parse_exchange_file_urn(data)
+
+
+async def get_elements_with_filter_async(
+    token: str,
+    exchange_id: str,
+    *,
+    filter_query: str,
+    page_size: int = 200,
+    client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    all_results: list[dict] = []
+    cursor: str | None = None
+    while True:
+        variables = {
+            "exchangeId": exchange_id,
+            "elementFilter": {"query": filter_query},
+            "elementPagination": {"limit": page_size, "cursor": cursor or ""},
+        }
+        data = await execute_graphql_query_async(
+            GET_ELEMENTS_WITH_FILTER, token, variables, client=client
+        )
+        page, cursor = _parse_elements_with_properties_page(data)
+        all_results.extend(page)
+        if not cursor:
+            break
+    return all_results
+
+
+async def get_elements_by_property_name_async(
+    token: str,
+    exchange_id: str,
+    *,
+    property_name: str,
+    value: str,
+    page_size: int = 200,
+    client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    return await get_elements_with_filter_async(
+        token,
+        exchange_id,
+        filter_query=build_property_equals_filter(property_name, value),
+        page_size=page_size,
+        client=client,
+    )
+
+
+async def get_elements_by_metadata_name_async(
+    token: str,
+    exchange_id: str,
+    *,
+    metadata_name: str,
+    page_size: int = 200,
+    client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    return await get_elements_with_filter_async(
+        token,
+        exchange_id,
+        filter_query=build_metadata_name_equals_filter(metadata_name),
+        page_size=page_size,
+        client=client,
+    )

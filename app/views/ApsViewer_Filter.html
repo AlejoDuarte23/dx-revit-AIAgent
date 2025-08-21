@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>APS Viewer, property filter</title>
+  <link rel="stylesheet"
+        href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css"
+        type="text/css">
+  <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
+  <style>
+    html, body, #apsViewerDiv { width: 100%, height: 100%, margin: 0 }
+    #status {
+      position: absolute, top: 10px, left: 10px, z-index: 10,
+      background: rgba(0,0,0,0.8), color: #fff, padding: 8px 12px, border-radius: 6px,
+      font: 12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif,
+      max-width: 70%, white-space: pre-line
+    }
+    #toolbar {
+      position: absolute, top: 10px, right: 10px, z-index: 10,
+      background: rgba(255,255,255,0.95), border-radius: 6px, padding: 8px 10px,
+      font: 12px/1.3 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif,
+      display: flex, gap: 8px, align-items: center
+    }
+    #toolbar input { padding: 4px 6px }
+    #toolbar button { padding: 4px 8px, cursor: pointer }
+  </style>
+</head>
+<body>
+  <div id="apsViewerDiv"></div>
+  <div id="status"></div>
+  <div id="toolbar">
+    <label>Filter</label>
+    <input id="elInput" placeholder="Door">
+    <button id="applyIsolate">Isolate</button>
+    <button id="applyTheme">Theme</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <script>
+    // Keep these exact placeholders and replace them in VIKTOR.
+    var ACCESS_TOKEN = 'APS_TOKEN_PLACEHOLDER';
+    var DOCUMENT_URN = 'urn:URN_PLACEHOLDER';
+    var FILTER_ELEMENT = 'FILTER_ELEMENT_PLACEHOLDER'; // example: Door, Wall, Curtain Panel
+    console.log(FILTER_ELEMENT)
+    // Optional: change to 'theme' if you prefer coloring over isolation by default.
+    var DEFAULT_ACTION = 'isolate'; // 'isolate' or 'theme'
+
+    function setStatus(msg) {
+      var s = document.getElementById('status');
+      if (s) s.textContent = msg;
+    }
+
+    // Avoid analytics in sandboxed iframes
+    try { Autodesk.Viewing.Private.analytics.optOut() } catch (e) {}
+
+    var viewer = null, loadedModel = null;
+
+    Autodesk.Viewing.Initializer(
+      { env: 'AutodeskProduction2', api: 'streamingV2', accessToken: ACCESS_TOKEN },
+      function () {
+        var container = document.getElementById('apsViewerDiv');
+        viewer = new Autodesk.Viewing.GuiViewer3D(container, { disableBimWalkInfoIcon: true });
+        viewer.start();
+
+        Autodesk.Viewing.Document.load(
+          DOCUMENT_URN,
+          function onSuccess(doc) {
+            var node = doc.getRoot().getDefaultGeometry();
+            if (!node) { setStatus('No viewable found'); return }
+            viewer.loadDocumentNode(doc, node, { keepCurrentModels: false }).then(function(model) {
+              loadedModel = model;
+              // Apply initial filter only if you replaced the placeholder
+              if (FILTER_ELEMENT && FILTER_ELEMENT !== 'FILTER_ELEMENT_PLACEHOLDER') {
+                applyPostFilter(FILTER_ELEMENT, DEFAULT_ACTION);
+                var el = document.getElementById('elInput');
+                if (el) el.value = FILTER_ELEMENT;
+              } else {
+                setStatus('Model loaded');
+              }
+            });
+          },
+          function onFailure(code, message) {
+            setStatus('Document load failed: ' + code + ', ' + message);
+          }
+        );
+      }
+    );
+
+    // Build a simple matching rule set
+    function normalize(s) { return String(s || '').trim() }
+    function toPluralMaybe(s) { return s.endsWith('s') ? s : s + 's' }
+
+    // Some common category aliases you can extend as needed
+    var CATEGORY_ALIASES = {
+      'Door': ['Door', 'Doors'],
+      'Wall': ['Wall', 'Walls'],
+      'Curtain Panel': ['Curtain Panel', 'Curtain Panels'],
+      'Curtain Wall': ['Curtain Wall', 'Curtain Walls'],
+      'Floor': ['Floor', 'Floors'],
+      'Roof': ['Roof', 'Roofs'],
+      'Structural Framing': ['Structural Framing'],
+      'Structural Columns': ['Structural Columns'],
+      'Window': ['Window', 'Windows']
+    };
+
+    function expandCategoryTargets(target) {
+      var key = normalize(target);
+      var list = CATEGORY_ALIASES[key];
+      if (list && list.length) return list;
+      // Fallback to singular and plural
+      return [key, toPluralMaybe(key)];
+    }
+
+    function themeDbIds(dbids) {
+      viewer.clearThemingColors();
+      var color = new THREE.Vector4(0, 0, 1, 0.8); // blue
+      for (var i = 0; i < dbids.length; i++) viewer.setThemingColor(dbids[i], color);
+      viewer.fitToView(dbids);
+    }
+
+    function isolateDbIds(dbids) {
+      viewer.clearThemingColors();
+      viewer.isolate(dbids);
+      viewer.fitToView(dbids);
+    }
+
+    function applyPostFilter(elementName, action) {
+      if (!viewer || !loadedModel) return;
+      var target = normalize(elementName);
+      if (!target) { setStatus('Filter is empty'); return }
+
+      setStatus('Searching "' + target + '" ...');
+
+      // Search across common properties
+      viewer.search(
+        target,
+        function onSearchSuccess(dbids) {
+          if (!dbids || dbids.length === 0) {
+            setStatus('No matches for "' + target + '"');
+            return;
+          }
+          // Refine to exact property matches
+          loadedModel.getBulkProperties(
+            dbids,
+            { propFilter: ['Category', 'Family', 'Type Name', 'Name'] },
+            function onProps(results) {
+              var allowCats = new Set(expandCategoryTargets(target).map(normalize));
+              var wanted = [];
+              for (var i = 0; i < results.length; i++) {
+                var r = results[i];
+                var props = r.properties || [];
+                var map = {};
+                for (var j = 0; j < props.length; j++) {
+                  map[props[j].displayName] = normalize(props[j].displayValue);
+                }
+                var cat = map['Category'];
+                var fam = map['Family'];
+                var typ = map['Type Name'];
+                var nam = map['Name'] || '';
+
+                var match =
+                  (cat && allowCats.has(cat)) ||
+                  (fam && fam === target) ||
+                  (typ && typ === target) ||
+                  (nam && nam.toLowerCase().indexOf(target.toLowerCase()) !== -1);
+
+                if (match) wanted.push(r.dbId);
+              }
+
+              if (wanted.length === 0) {
+                setStatus('No exact property matches for "' + target + '"');
+                return;
+              }
+
+              if (action === 'theme') {
+                themeDbIds(wanted);
+                setStatus('Themed ' + wanted.length + ' items for "' + target + '"');
+              } else {
+                isolateDbIds(wanted);
+                setStatus('Isolated ' + wanted.length + ' items for "' + target + '"');
+              }
+            },
+            function onPropsError(err) {
+              setStatus('getBulkProperties failed: ' + String(err));
+            }
+          );
+        },
+        function onSearchError(err) {
+          setStatus('Search failed: ' + String(err));
+        },
+        ['Category', 'Family', 'Type Name', 'Name'] // search scopes
+      );
+    }
+
+    // Toolbar, manual control
+    document.getElementById('applyIsolate').addEventListener('click', function () {
+      var val = document.getElementById('elInput').value;
+      applyPostFilter(val, 'isolate');
+    });
+    document.getElementById('applyTheme').addEventListener('click', function () {
+      var val = document.getElementById('elInput').value;
+      applyPostFilter(val, 'theme');
+    });
+    document.getElementById('clear').addEventListener('click', function () {
+      if (!viewer) return;
+      viewer.clearThemingColors();
+      viewer.isolate([]); // show all
+      setStatus('Cleared');
+    });
+  </script>
+</body>
+</html>

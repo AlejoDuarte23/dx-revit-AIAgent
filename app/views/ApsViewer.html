@@ -2,151 +2,197 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>APS Viewer</title>
-  <link rel="stylesheet"
-        href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css"
-        type="text/css">
+  <title>APS Viewer, simple filter</title>
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css">
   <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
   <style>
     html, body, #apsViewerDiv { width: 100%; height: 100%; margin: 0; }
-    #status {
-      position: absolute; top: 10px; left: 10px; z-index: 10;
-      background: rgba(0,0,0,0.7); color: #fff; padding: 6px 10px; border-radius: 6px;
-      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      max-width: 70%;
-      white-space: pre-line;
-    }
   </style>
 </head>
 <body>
   <div id="apsViewerDiv"></div>
 
   <script>
-
+    // Replace these three in your backend
     var ACCESS_TOKEN = 'APS_TOKEN_PLACEHOLDER';
     var DOCUMENT_URN = 'urn:URN_PLACEHOLDER';
-    var TARGET_GUID  = '';
-    console.log(DOCUMENT_URN)
+    var FILTER_ELEMENT = 'FILTER_ELEMENT_PLACEHOLDER'; // examples: HVAC Feed, Glazed, Curtain Panels
+    console.log(FILTER_ELEMENT)
+    // Disable analytics for sandbox iframes
+    try { Autodesk.Viewing.Private.analytics.optOut(); } catch (e) {}
 
-  const statusEl = document.getElementById('status');
-  function setStatus(_msg) { /* no-op (silenced}
-  function appendStatus(_msg) { /* no-op (silenced) */ }
-  function logObj(_label, _obj) { /* no-op (silenced) */ }
-    function describeNode(node) {
-      if (!node) return null;
-      let type = null, role = null;
-      try { type = node.getType ? node.getType() : null; } catch (_) {}
-      try {
-        if (typeof node.is3D === 'function' && node.is3D()) role = '3d';
-        if (typeof node.is2D === 'function' && node.is2D()) role = role ? role + '+2d' : '2d';
-      } catch (_) {}
-      try { if (!role && node.data && node.data.role) role = node.data.role; } catch (_) {}
-      return {
-        name: node.name || null,
-        guid: node.guid || null,
-        type: type,
-        role: role
-      };
-    }
-    function isResource(node) {
-      try { return node && node.getType && node.getType() === 'resource'; } catch (_) { return false; }
-    }
-    function isViewOrGeom(node) {
-        try {
-            if (node && ((node.is3D && node.is3D()) || (node.is2D && node.is2D()))) {
-                return true;
-            }
-            if (node && node.data && (node.data.role === '3d' || node.data.role === '2d' || node.data.role === 'graphics')) {
-                return true;
-            }
-            return false;
-        } catch (_) {
-            return false;
-        }
+    var viewer = null;
+    var modelLoaded = null;
+  var DEBUG_FILTER = true; // toggle to control summary logs
+  var DEBUG_FILTER_VERBOSE = true; // toggle to see per-item matching details
+
+    function flog() {
+      if (!DEBUG_FILTER) return;
+      var args = Array.prototype.slice.call(arguments);
+      args.unshift('[Filter]');
+      console.log.apply(console, args);
     }
 
-    // Avoid Mixpanel/localStorage in sandboxed iframes
-  try { Autodesk.Viewing.Private.analytics.optOut(); } catch (e) { /* silent */ }
-
-    const initT0 = performance.now();
-    
     Autodesk.Viewing.Initializer(
-      { 
-        env: 'AutodeskProduction2', 
-        api: 'streamingV2', 
-        accessToken: ACCESS_TOKEN 
-      },
+      { env: 'AutodeskProduction2', api: 'streamingV2', accessToken: ACCESS_TOKEN },
       function () {
-        // silenced
-        const t0 = performance.now();
+        var container = document.getElementById('apsViewerDiv');
+        viewer = new Autodesk.Viewing.GuiViewer3D(container, { disableBimWalkInfoIcon: true });
+        viewer.start();
+        flog('Viewer started');
+
         Autodesk.Viewing.Document.load(
           DOCUMENT_URN,
           function onSuccess(doc) {
-            const t1 = performance.now();
-
-            try {
-              const container = document.getElementById('apsViewerDiv');
-              const viewer = new Autodesk.Viewing.GuiViewer3D(container);
-              viewer.start();
-              const root = doc.getRoot();
-
-              // Resolve target node
-              let node = null;
-              if (TARGET_GUID) {
-                node = root.findByGuid(TARGET_GUID);
+            var node = doc.getRoot().getDefaultGeometry();
+            if (!node) { console.warn('No default geometry'); return; }
+            viewer.loadDocumentNode(doc, node, { keepCurrentModels: false }).then(function (model) {
+              modelLoaded = model;
+              flog('Model loaded');
+              var rawFilter = FILTER_ELEMENT;
+              var normalizedFilter = String(rawFilter || '').trim();
+              var hasFilter = normalizedFilter.length > 0;
+              flog('Init filter check:', { raw: rawFilter, normalized: normalizedFilter, willApply: hasFilter });
+              if (hasFilter) {
+                console.info('[Filter] Initial filter requested:', normalizedFilter);
+                applyFilterWord(normalizedFilter);
+              } else {
+                flog('No initial filter provided');
               }
-
-              if (!node) {
-                const defNode = root.getDefaultGeometry();
-                if (!defNode) {
-                  return;
-                }
-                loadByNode(viewer, doc, defNode);
-                return;
-              }
-
-              loadByNode(viewer, doc, node);
-            } catch (err) {
-            }
+            });
           },
           function onFailure(code, message) {
-            const t1 = performance.now();
+            console.error('Document load failed:', code, message);
           }
         );
       }
     );
 
-    function loadByNode(viewer, doc, node) {
-      // silenced
+    // ---------- Filtering logic, word only ----------
+    function norm(s) { return String(s || '').trim(); }
+    function eqi(a, b) { return norm(a).toLowerCase() === norm(b).toLowerCase(); }
+    function pluralMaybe(s) { return s.endsWith('s') ? s : s + 's'; }
 
-      if (isViewOrGeom(node)) {
-        const t0 = performance.now();
-        viewer.loadDocumentNode(doc, node, { keepCurrentModels: false })
-          .then(() => {
-            const t1 = performance.now();
-          })
-          .catch((e) => {
-          });
+    // Basic aliases for Category singular and plural
+    var CATEGORY_ALIASES = {
+      'Door': ['Door', 'Doors'],
+      'Wall': ['Wall', 'Walls'],
+      'Window': ['Window', 'Windows'],
+      'Floor': ['Floor', 'Floors'],
+      'Roof': ['Roof', 'Roofs'],
+      'Curtain Panel': ['Curtain Panel', 'Curtain Panels'],
+      'Curtain Wall': ['Curtain Wall', 'Curtain Walls'],
+      'Structural Framing': ['Structural Framing'],
+      'Structural Columns': ['Structural Columns']
+    };
+    function expandCategoryTargets(word) {
+      var key = norm(word);
+      var list = CATEGORY_ALIASES[key];
+      if (list && list.length) return list.map(norm);
+      return [key, norm(pluralMaybe(key))];
+    }
+
+    function applyFilterWord(word) {
+      if (!viewer || !modelLoaded) {
+        console.warn('[Filter] Viewer or model not ready');
         return;
       }
 
-      if (isResource(node)) {
-        const path = doc.getViewablePath(node);
-        if (path) {
-          const t0 = performance.now();
-          viewer.loadModel(path, {},
-            () => {
-              const t1 = performance.now();
+      var target = norm(word);
+      if (!target) return;
+      flog('applyFilterWord called with:', word, '| normalized:', target);
+
+      // Step 1, broad search by text over common properties
+      flog('Starting search for target across properties:', ['Name','Category','Family','Family Name','Type Name']);
+      viewer.search(
+        target,
+        function onSearch(dbids) {
+          flog('Search returned hits:', (dbids && dbids.length) || 0);
+          if (!dbids || dbids.length === 0) {
+            console.info('No search hits for', target);
+            return;
+          }
+
+          // Step 2, exact match on key properties
+          modelLoaded.getBulkProperties(
+            dbids,
+            { propFilter: ['Name', 'Category', 'Family', 'Family Name', 'Type Name'] },
+            function onProps(results) {
+              flog('Evaluating exact matches among results:', results.length);
+              var wanted = [];
+              var catTargets = new Set(expandCategoryTargets(target).map(function (x) { return x.toLowerCase(); }));
+
+              for (var i = 0; i < results.length; i++) {
+                var r = results[i], props = r.properties || [], map = {};
+                for (var j = 0; j < props.length; j++) {
+                  var p = props[j];
+                  map[p.displayName] = norm(p.displayValue);
+                }
+
+                var nameVal = map['Name'] || '';
+                var catVal  = map['Category'] || '';
+                var famVal1 = map['Family'] || '';
+                var famVal2 = map['Family Name'] || '';
+                var typeVal = map['Type Name'] || '';
+
+                var reason = null;
+                var exact = false;
+                if (eqi(nameVal, target)) { exact = true; reason = 'name'; }
+                else if (catTargets.has(catVal.toLowerCase())) { exact = true; reason = 'category'; }
+                else if (eqi(famVal1, target)) { exact = true; reason = 'family'; }
+                else if (eqi(famVal2, target)) { exact = true; reason = 'family name'; }
+                else if (eqi(typeVal, target)) { exact = true; reason = 'type'; }
+
+                if (exact) {
+                  wanted.push(r.dbId);
+                  if (DEBUG_FILTER_VERBOSE) flog('Match', { dbId: r.dbId, name: nameVal, cat: catVal, fam: famVal1 || famVal2, type: typeVal, reason: reason });
+                } else if (DEBUG_FILTER_VERBOSE) {
+                  flog('No match', { dbId: r.dbId, name: nameVal, cat: catVal, fam: famVal1 || famVal2, type: typeVal });
+                }
+              }
+
+              flog('Exact match count:', wanted.length);
+              // Step 3, fallback to Name contains if no exact hits
+              if (wanted.length === 0) {
+                var fallbackCount = 0;
+    for (var k = 0; k < results.length; k++) {
+                  var rp = results[k].properties || [];
+                  for (var u = 0; u < rp.length; u++) {
+                    if (rp[u].displayName === 'Name') {
+                      var val = norm(rp[u].displayValue).toLowerCase();
+                      if (val.indexOf(target.toLowerCase()) !== -1) {
+                        wanted.push(results[k].dbId);
+                        fallbackCount++;
+      if (DEBUG_FILTER_VERBOSE) flog('Fallback match (Name contains)', { dbId: results[k].dbId, name: norm(rp[u].displayValue) });
+                      }
+                      break;
+                    }
+                  }
+                }
+                flog('Fallback (Name contains) match count:', fallbackCount);
+              }
+
+              if (wanted.length === 0) {
+                console.info('No elements match', target);
+                return;
+              }
+
+              // Isolate matches
+              viewer.clearThemingColors();
+              viewer.isolate(wanted);
+              viewer.fitToView(wanted);
+              console.info('Isolated', wanted.length, 'elements for', target);
             },
-            (e) => {
+            function onPropsErr(e) {
+              console.error('getBulkProperties failed', e);
             }
           );
-          return;
-        }
-      }
+        },
+        function onSearchErr(e) { console.error('search failed', e); },
+        ['Name', 'Category', 'Family', 'Family Name', 'Type Name']
+      );
     }
-
-    const initT1 = performance.now();
+    // ---------- end filtering ----------
   </script>
 </body>
 </html>
