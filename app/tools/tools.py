@@ -13,7 +13,7 @@ TOOL_GET_HUBS = "GetHubTools"
 
 
 def get_token() -> str:
-    integration = vkt.external.OAuth2Integration("aps-integration-1")
+    integration = vkt.external.OAuth2Integration("aps-integration-viktor")
     return integration.get_access_token()
 
 @function_tool()
