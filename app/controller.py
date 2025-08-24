@@ -30,13 +30,10 @@ class Controller(vkt.Controller):
 
         try:
             raw_html = vkt.Storage().get("aps_view", scope="entity").getvalue()
-            # Ensure WebResult gets a string
             if isinstance(raw_html, (bytes, bytearray)):
                 raw_html = raw_html.decode("utf-8", errors="replace")
             return vkt.WebResult(html=raw_html)
 
         except Exception:
-            # fig = default_blank_scene()
             file_path = Path(__file__).parent / "views" / "BlankScene.html"
-            # fig.write_html(str(file_path))
             return vkt.WebResult.from_path(file_path=file_path)

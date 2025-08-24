@@ -8,7 +8,6 @@ from app.queries import (
     GET_PROJECTS,
     GET_TOP_FOLDERS,
     GET_FOLDER_CONTENT,
-    GET_ELEMENTS_CATEGORIES,
     GET_EXCHANGE_FILE_URN,
     GET_ELEMENTS_WITH_FILTER,
 )
@@ -51,66 +50,6 @@ def parse_folder_tree(data: dict) -> Optional[DXFolderTree]:
 def get_hubs(token: str) -> list[DXHub]:
     return parse_hubs(execute_graphql_query(GET_HUBS, token))
 
-def get_projects(token: str, hub_id: str) -> list[DXProject]:
-    return parse_projects(execute_graphql_query(GET_PROJECTS, token, {"hubId": hub_id}))
-
-def get_top_folders(token: str, project_id: str) -> list[DXFolderTree]:
-    return parse_top_folders(execute_graphql_query(GET_TOP_FOLDERS, token, {"projectId": project_id}))
-
-def get_folder_tree(token: str, folder_id: str) -> DXFolderTree | None:
-    return parse_folder_tree(execute_graphql_query(GET_FOLDER_CONTENT, token, {"folderId": folder_id}))
-
-
-# Elements categories (by exchange)
-def _parse_elements_categories_page(data: dict) -> tuple[dict[str, str | None], str | None]:
-    """Parse one page of elements -> category.
-
-    Returns a mapping of element id to category string (or None) and the next cursor.
-    """
-    out: dict[str, str | None] = {}
-    elements = (
-        data.get("exchange", {})
-        .get("elements", {})
-    )
-    pagination = elements.get("pagination", {}) or {}
-    next_cursor = pagination.get("cursor")
-    for el in (elements.get("results", []) or []):
-        el_id = el.get("id")
-        if not el_id:
-            continue
-        props = (el.get("properties", {}) or {}).get("results", []) or []
-        # find the property named "category"
-        category_val = None
-        for p in props:
-            if p.get("name") == "category":
-                category_val = p.get("value")
-                break
-        out[el_id] = category_val
-    return out, next_cursor
-
-
-def get_elements_categories(
-    token: str,
-    exchange_id: str,
-    *,
-    page_size: int = 1000,
-) -> dict[str, str | None]:
-    """Return a mapping of element id -> category for a given exchange.
-
-    Paginates through all elements.
-    """
-    results: dict[str, str | None] = {}
-    cursor: str | None = None
-    while True:
-        variables = {"exchangeId": exchange_id, "pageSize": page_size, "cursor": cursor}
-        data = execute_graphql_query(GET_ELEMENTS_CATEGORIES, token, variables)
-        page_map, cursor = _parse_elements_categories_page(data)
-        results.update(page_map)
-        if not cursor:
-            break
-    return results
-
-
 def parse_exchange_file_urn(data: dict) -> str | None:
     alt = data.get("exchange", {}).get("alternativeIdentifiers", {}) or {}
     return alt.get("fileVersionUrn")
@@ -124,7 +63,6 @@ def get_exchange_file_urn(token: str, exchange_id: str) -> str | None:
     return parse_exchange_file_urn(data)
 
 
-# ---- Filter builders and element retrieval helpers ----
 def _dx_quote_single(val: str) -> str:
     v = (val or "").strip()
     v = v.replace("'", "\\'")
@@ -242,98 +180,3 @@ async def get_folder_tree_async(
         GET_FOLDER_CONTENT, token, {"folderId": folder_id}, client=client
     )
     return parse_folder_tree(data)
-
-
-async def get_elements_categories_async(
-    token: str,
-    exchange_id: str,
-    *,
-    page_size: int = 200,
-    client: httpx.AsyncClient | None = None,
-) -> dict[str, str | None]:
-    """Async version to fetch all element categories for an exchange."""
-    results: dict[str, str | None] = {}
-    cursor: str | None = None
-    while True:
-        variables = {"exchangeId": exchange_id, "pageSize": page_size, "cursor": cursor}
-        data = await execute_graphql_query_async(
-            GET_ELEMENTS_CATEGORIES, token, variables, client=client
-        )
-        page_map, cursor = _parse_elements_categories_page(data)
-        results.update(page_map)
-        if not cursor:
-            break
-    return results
-
-
-async def get_exchange_file_urn_async(
-    token: str,
-    exchange_id: str,
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> str | None:
-    data = await execute_graphql_query_async(
-        GET_EXCHANGE_FILE_URN, token, {"exchangeId": exchange_id}, client=client
-    )
-    return parse_exchange_file_urn(data)
-
-
-async def get_elements_with_filter_async(
-    token: str,
-    exchange_id: str,
-    *,
-    filter_query: str,
-    page_size: int = 200,
-    client: httpx.AsyncClient | None = None,
-) -> list[dict]:
-    all_results: list[dict] = []
-    cursor: str | None = None
-    while True:
-        variables = {
-            "exchangeId": exchange_id,
-            "elementFilter": {"query": filter_query},
-            "elementPagination": {"limit": page_size, "cursor": cursor or ""},
-        }
-        data = await execute_graphql_query_async(
-            GET_ELEMENTS_WITH_FILTER, token, variables, client=client
-        )
-        page, cursor = _parse_elements_with_properties_page(data)
-        all_results.extend(page)
-        if not cursor:
-            break
-    return all_results
-
-
-async def get_elements_by_property_name_async(
-    token: str,
-    exchange_id: str,
-    *,
-    property_name: str,
-    value: str,
-    page_size: int = 200,
-    client: httpx.AsyncClient | None = None,
-) -> list[dict]:
-    return await get_elements_with_filter_async(
-        token,
-        exchange_id,
-        filter_query=build_property_equals_filter(property_name, value),
-        page_size=page_size,
-        client=client,
-    )
-
-
-async def get_elements_by_metadata_name_async(
-    token: str,
-    exchange_id: str,
-    *,
-    metadata_name: str,
-    page_size: int = 200,
-    client: httpx.AsyncClient | None = None,
-) -> list[dict]:
-    return await get_elements_with_filter_async(
-        token,
-        exchange_id,
-        filter_query=build_metadata_name_equals_filter(metadata_name),
-        page_size=page_size,
-        client=client,
-    )

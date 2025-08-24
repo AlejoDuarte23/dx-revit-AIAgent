@@ -7,33 +7,36 @@ from app.crud import get_elements_by_property_name
 from app.crud import get_hubs, get_exchange_file_urn, get_elements_by_metadata_name
 from app.data_exchange import list_exchanges_in_hub
 from pathlib import Path
-from pydantic import BaseModel
-
-TOOL_GET_HUBS = "GetHubTools"
-
+from pydantic import BaseModel, Field
 
 def get_token() -> str:
     integration = vkt.external.OAuth2Integration("aps-integration-viktor")
     return integration.get_access_token()
+
 
 @function_tool()
 def get_hub_tool():
     """List the hubs to the user, display the name and also de id"""
     return get_hubs(token=get_token())
 
+
 @function_tool()
 async def get_exchanges_tool(hub_id: str | None = None, hub_name: str | None = None):
     """List the exchanges in a hub (by id or name). Returns {name: id}."""
-    return await list_exchanges_in_hub(token=get_token(), hub_id=hub_id, hub_name=hub_name)
+    return await list_exchanges_in_hub(
+        token=get_token(), hub_id=hub_id, hub_name=hub_name
+    )
+
 
 @function_tool()
 def get_exchange_file_file_urn_tool(exchange_id: str) -> str:
     """input the exchange id and return the urn for the exchange do not change anithing about the urn even the "version=1" """
     return get_exchange_file_urn(token=get_token(), exchange_id=exchange_id)
 
+
 @function_tool()
 def display_exchange_model(urn: str, filter_element: str | None = None):
-    """ user the urn someting like: urn:adsk.wipprod... to display the exchange model"""
+    """user the urn someting like: urn:adsk.wipprod... to display the exchange model"""
     print(f"Received -> {urn=}, {filter_element=}")
     token = get_token()
     urn_bs64 = base64.urlsafe_b64encode(urn.encode()).decode().rstrip("=")
@@ -43,9 +46,12 @@ def display_exchange_model(urn: str, filter_element: str | None = None):
     html = html_path.read_text(encoding="utf-8")
     html = html.replace("APS_TOKEN_PLACEHOLDER", token)
     html = html.replace("URN_PLACEHOLDER", urn_bs64)
-    # Always replace the placeholder; if None/empty, leave it as empty string
-    # Escape quotes/backslashes to keep valid JS string literal
-    safe_filter = (filter_element or "").replace("\\", "\\\\").replace("\"", "\\\"").replace("'", "\\'")
+    safe_filter = (
+        (filter_element or "")
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("'", "\\'")
+    )
     print(f"[DEBUG] injecting FILTER_ELEMENT= '{safe_filter}'")
     html = html.replace("FILTER_ELEMENT_PLACEHOLDER", safe_filter)
 
@@ -58,17 +64,13 @@ def display_exchange_model(urn: str, filter_element: str | None = None):
         "Tool Excecution Complete. In the RHS the model will be displayed in a second"
     )
 
-# ---------------- Dashboard tool ----------------
-class DashboardData(BaseModel):
-    """Inputs for the dashboard visualization.
 
-    names: list of category/item labels
-    counts: list of element counts per label
-    volumes: list of volumes per label (m^3)
-    """
-    names: list[str]
-    counts: list[int]
-    volumes: list[float]
+class DashboardData(BaseModel):
+    """Inputs for the dashboard visualization."""
+
+    names: list[str] = Field(..., description="List of category/item labels")
+    counts: list[int] = Field(..., description="List of category/item labels")
+    volumes: list[float] = Field(..., description="List of category/item labels")
 
 
 @function_tool()
@@ -109,6 +111,7 @@ def display_dashboard(data: DashboardData):
         scope="entity",
     )
     return "Dashboard generated. Open the Model Viewer panel to view it."
+
 
 @function_tool()
 def query_elements_by_metadata_name(
@@ -154,18 +157,18 @@ def query_elements_by_metadata_name(
 
     default_props: list[str] = []
     if include_area:
-        default_props.append('Area')
+        default_props.append("Area")
     if include_volume:
-        default_props.append('Volume')
+        default_props.append("Volume")
     if include_family_name:
-        default_props.append('Family Name')
+        default_props.append("Family Name")
 
     prop_list: list[str] = []
     add_props(prop_list, default_props)
     if properties:
-        add_props(prop_list, [p for p in properties.split(',') if p])
+        add_props(prop_list, [p for p in properties.split(",") if p])
     if extra:
-        add_props(prop_list, [p for p in extra.split(',') if p])
+        add_props(prop_list, [p for p in extra.split(",") if p])
 
     data = get_elements_by_metadata_name(
         token=get_token(), exchange_id=exchange_id, metadata_name=element_name
@@ -176,10 +179,8 @@ def query_elements_by_metadata_name(
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        # Some backends may return a single item or a dict wrapper
-        # Treat dict with 'results' as list, else single item
-        if 'results' in data and isinstance(data['results'], list):
-            items = data['results']
+        if "results" in data and isinstance(data["results"], list):
+            items = data["results"]
         else:
             items = [data]
     else:
@@ -187,20 +188,19 @@ def query_elements_by_metadata_name(
 
     count = len(items)
 
-    # Gather all available property names (original casing) across items
     all_prop_names_original: set[str] = set()
     for it in items:
-        props = it.get('properties', {})
-        results = props.get('results', []) if isinstance(props, dict) else []
+        props = it.get("properties", {})
+        results = props.get("results", []) if isinstance(props, dict) else []
         for p in results:
-            name = str(p.get('name', '')).strip()
+            name = str(p.get("name", "")).strip()
             if name:
                 all_prop_names_original.add(name)
 
     # Expand prop_list based on wildcard
     if wildcard:
         wc = wildcard.strip()
-        if wc == '*':
+        if wc == "*":
             add_props(prop_list, sorted(list(all_prop_names_original)))
         else:
             needle = wc.lower()
@@ -210,20 +210,20 @@ def query_elements_by_metadata_name(
     def to_prop_map(item: dict) -> dict:
         """Extract properties into a case-insensitive map."""
         props_ci = {}
-        props = item.get('properties', {})
-        results = props.get('results', []) if isinstance(props, dict) else []
+        props = item.get("properties", {})
+        results = props.get("results", []) if isinstance(props, dict) else []
         for p in results:
-            name = str(p.get('name', '')).strip()
-            val = p.get('value')
+            name = str(p.get("name", "")).strip()
+            val = p.get("value")
             if name:
                 props_ci[name.lower()] = val
         # Add some common top-level aliases if present
-        if 'name' in item:
-            props_ci['name'] = item['name']
-        if 'category' in item:
-            props_ci['category'] = item['category']
-        if 'family' in item:
-            props_ci['family'] = item['family']
+        if "name" in item:
+            props_ci["name"] = item["name"]
+        if "category" in item:
+            props_ci["category"] = item["category"]
+        if "family" in item:
+            props_ci["family"] = item["family"]
         return props_ci
 
     # Aggregate summary for numerics
@@ -250,20 +250,22 @@ def query_elements_by_metadata_name(
     for key, total in numeric_totals.items():
         n = max(numeric_counts.get(key, 0), 1)
         avg = total / n
-        summary_lines.append(f"{key.title()}: total={total:.4f}, avg={avg:.4f}, count={n}")
+        summary_lines.append(
+            f"{key.title()}: total={total:.4f}, avg={avg:.4f}, count={n}"
+        )
     for key, values in categorical_sets.items():
         # show up to 5 unique values
         vals = list(values)
-        preview = ', '.join(str(v) for v in vals[:5])
-        more = '' if len(vals) <= 5 else f" (+{len(vals)-5} more)"
+        preview = ", ".join(str(v) for v in vals[:5])
+        more = "" if len(vals) <= 5 else f" (+{len(vals) - 5} more)"
         summary_lines.append(f"{key.title()}: {preview}{more}")
 
     # Sample the first few items
     sample_lines = []
     for it in items[: min(5, count)]:
         m = to_prop_map(it)
-        id_part = it.get('id', '')
-        name_part = it.get('name', m.get('name', ''))
+        id_part = it.get("id", "")
+        name_part = it.get("name", m.get("name", ""))
         parts = [f"id={id_part}", f"name={name_part}"]
         for p in prop_list:
             key = p.lower()
@@ -276,11 +278,11 @@ def query_elements_by_metadata_name(
     samples = ("\nSamples:\n" + "\n".join(sample_lines)) if sample_lines else ""
     return header + summary + samples
 
-def get_element_by_property_name(exchange_id:str, property_name:str, value:str):
+
+def get_element_by_property_name(exchange_id: str, property_name: str, value: str):
     return get_elements_by_property_name(
         token=get_token(),
         exchange_id=exchange_id,
         property_name=property_name,
         value=value,
     )
-    

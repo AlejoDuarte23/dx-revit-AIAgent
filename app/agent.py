@@ -13,23 +13,25 @@ import threading
 
 load_dotenv()
 
-# Persistent background event loop to avoid creating/closing loops per request.
-_loop = None
-_loop_thread = None
+event_loop: asyncio.AbstractEventLoop | None = None
+event_loop_thread: threading.Thread | None = None
 
 
-def _ensure_loop():
-    global _loop, _loop_thread
-    if _loop and _loop.is_running():
-        return
-    _loop = asyncio.new_event_loop()
-    _loop_thread = threading.Thread(target=_loop.run_forever, name="dx-agent-loop", daemon=True)
-    _loop_thread.start()
+def ensure_loop() -> asyncio.AbstractEventLoop:
+    global event_loop, event_loop_thread
+    if event_loop and event_loop.is_running():
+        return event_loop
+    event_loop = asyncio.new_event_loop()
+    event_loop_thread = threading.Thread(
+        target=event_loop.run_forever, name="dx-agent-loop", daemon=True
+    )
+    event_loop_thread.start()
+    return event_loop
 
 
-def _run_async(coro):
-    _ensure_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, _loop)
+def run_async(coro):
+    loop = ensure_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
     return fut.result()
 
 
@@ -38,7 +40,7 @@ async def dx_agent(chat_history: list[dict[str, str]]):
         name="Assistant",
         instructions=(
             "Help user to navigate ther Data Exchanges with the Autodesk Platform services "
-            "Tool you have at your disposal"
+            "Use the tools you have at your disposal"
         ),
         tools=[
             get_hub_tool,
@@ -55,5 +57,8 @@ async def dx_agent(chat_history: list[dict[str, str]]):
 
 
 def dx_agent_sync(chat_history: list[dict[str, str]]):
-    """Synchronous wrapper to run dx_agent on a persistent event loop."""
-    return _run_async(dx_agent(chat_history))
+    """Synchronous wrapper using the background event loop.
+    If a loop already exists (previous call), it's reused; otherwise a new one is created.
+    the entry is sync but the even loop can make concurrent api call to Autodesk! 
+    """
+    return run_async(dx_agent(chat_history))
