@@ -41,7 +41,7 @@ def display_exchange_model(urn: str, filter_element: str | None = None):
     token = get_token()
     urn_bs64 = base64.urlsafe_b64encode(urn.encode()).decode().rstrip("=")
     print(f"[DEBUG] {urn_bs64=}")
-    # Read the HTML template from the views folder (sibling of tools)
+    # Read the HTML template from the views folder
     html_path = Path(__file__).resolve().parent.parent / "views" / "ApsViewer.html"
     html = html_path.read_text(encoding="utf-8")
     html = html.replace("APS_TOKEN_PLACEHOLDER", token)

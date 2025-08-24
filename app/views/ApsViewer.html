@@ -68,12 +68,10 @@
       }
     );
 
-    // ---------- Filtering logic, word only ----------
     function norm(s) { return String(s || '').trim(); }
     function eqi(a, b) { return norm(a).toLowerCase() === norm(b).toLowerCase(); }
     function pluralMaybe(s) { return s.endsWith('s') ? s : s + 's'; }
 
-    // Basic aliases for Category singular and plural
     var CATEGORY_ALIASES = {
       'Door': ['Door', 'Doors'],
       'Wall': ['Wall', 'Walls'],

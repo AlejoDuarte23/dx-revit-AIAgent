@@ -37,12 +37,10 @@
   </div>
 
   <script>
-    // Keep these exact placeholders and replace them in VIKTOR.
     var ACCESS_TOKEN = 'APS_TOKEN_PLACEHOLDER';
     var DOCUMENT_URN = 'urn:URN_PLACEHOLDER';
     var FILTER_ELEMENT = 'FILTER_ELEMENT_PLACEHOLDER'; // example: Door, Wall, Curtain Panel
     console.log(FILTER_ELEMENT)
-    // Optional: change to 'theme' if you prefer coloring over isolation by default.
     var DEFAULT_ACTION = 'isolate'; // 'isolate' or 'theme'
 
     function setStatus(msg) {
@@ -50,7 +48,6 @@
       if (s) s.textContent = msg;
     }
 
-    // Avoid analytics in sandboxed iframes
     try { Autodesk.Viewing.Private.analytics.optOut() } catch (e) {}
 
     var viewer = null, loadedModel = null;
@@ -86,11 +83,9 @@
       }
     );
 
-    // Build a simple matching rule set
     function normalize(s) { return String(s || '').trim() }
     function toPluralMaybe(s) { return s.endsWith('s') ? s : s + 's' }
 
-    // Some common category aliases you can extend as needed
     var CATEGORY_ALIASES = {
       'Door': ['Door', 'Doors'],
       'Wall': ['Wall', 'Walls'],
