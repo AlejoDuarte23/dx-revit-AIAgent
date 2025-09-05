@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>APS Viewer, simple filter</title>
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css">
+  <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
+  <style>
+    html, body, #apsViewerDiv { width: 100%; height: 100%; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="apsViewerDiv"></div>
+
+  <script>
+    // Replace these three in your backend
+    var ACCESS_TOKEN = 'APS_TOKEN_PLACEHOLDER';
+    var DOCUMENT_URN = 'urn:URN_PLACEHOLDER';
+    var FILTER_ELEMENT = 'FILTER_ELEMENT_PLACEHOLDER'; // examples: HVAC Feed, Glazed, Curtain Panels
+    console.log(FILTER_ELEMENT)
+    // Disable analytics for sandbox iframes
+    try { Autodesk.Viewing.Private.analytics.optOut(); } catch (e) {}
+
+    var viewer = null;
+    var modelLoaded = null;
+  var DEBUG_FILTER = true; // toggle to control summary logs
+  var DEBUG_FILTER_VERBOSE = true; // toggle to see per-item matching details
+
+    function flog() {
+      if (!DEBUG_FILTER) return;
+      var args = Array.prototype.slice.call(arguments);
+      args.unshift('[Filter]');
+      console.log.apply(console, args);
+    }
+
+    Autodesk.Viewing.Initializer(
+      { env: 'AutodeskProduction2', api: 'streamingV2', accessToken: ACCESS_TOKEN },
+      function () {
+        var container = document.getElementById('apsViewerDiv');
+        viewer = new Autodesk.Viewing.GuiViewer3D(container, { disableBimWalkInfoIcon: true });
+        viewer.start();
+        flog('Viewer started');
+
+        Autodesk.Viewing.Document.load(
+          DOCUMENT_URN,
+          function onSuccess(doc) {
+            var node = doc.getRoot().getDefaultGeometry();
+            if (!node) { console.warn('No default geometry'); return; }
+            viewer.loadDocumentNode(doc, node, { keepCurrentModels: false }).then(function (model) {
+              modelLoaded = model;
+              flog('Model loaded');
+              var rawFilter = FILTER_ELEMENT;
+              var normalizedFilter = String(rawFilter || '').trim();
+              var hasFilter = normalizedFilter.length > 0;
+              flog('Init filter check:', { raw: rawFilter, normalized: normalizedFilter, willApply: hasFilter });
+              if (hasFilter) {
+                console.info('[Filter] Initial filter requested:', normalizedFilter);
+                applyFilterWord(normalizedFilter);
+              } else {
+                flog('No initial filter provided');
+              }
+            });
+          },
+          function onFailure(code, message) {
+            console.error('Document load failed:', code, message);
+          }
+        );
+      }
+    );
+
+    function norm(s) { return String(s || '').trim(); }
+    function eqi(a, b) { return norm(a).toLowerCase() === norm(b).toLowerCase(); }
+    function pluralMaybe(s) { return s.endsWith('s') ? s : s + 's'; }
+
+    var CATEGORY_ALIASES = {
+      'Door': ['Door', 'Doors'],
+      'Wall': ['Wall', 'Walls'],
+      'Window': ['Window', 'Windows'],
+      'Floor': ['Floor', 'Floors'],
+      'Roof': ['Roof', 'Roofs'],
+      'Curtain Panel': ['Curtain Panel', 'Curtain Panels'],
+      'Curtain Wall': ['Curtain Wall', 'Curtain Walls'],
+      'Structural Framing': ['Structural Framing'],
+      'Structural Columns': ['Structural Columns']
+    };
+    function expandCategoryTargets(word) {
+      var key = norm(word);
+      var list = CATEGORY_ALIASES[key];
+      if (list && list.length) return list.map(norm);
+      return [key, norm(pluralMaybe(key))];
+    }
+
+    function applyFilterWord(word) {
+      if (!viewer || !modelLoaded) {
+        console.warn('[Filter] Viewer or model not ready');
+        return;
+      }
+
+      var target = norm(word);
+      if (!target) return;
+      flog('applyFilterWord called with:', word, '| normalized:', target);
+
+      // Step 1, broad search by text over common properties
+      flog('Starting search for target across properties:', ['Name','Category','Family','Family Name','Type Name']);
+      viewer.search(
+        target,
+        function onSearch(dbids) {
+          flog('Search returned hits:', (dbids && dbids.length) || 0);
+          if (!dbids || dbids.length === 0) {
+            console.info('No search hits for', target);
+            return;
+          }
+
+          // Step 2, exact match on key properties
+          modelLoaded.getBulkProperties(
+            dbids,
+            { propFilter: ['Name', 'Category', 'Family', 'Family Name', 'Type Name'] },
+            function onProps(results) {
+              flog('Evaluating exact matches among results:', results.length);
+              var wanted = [];
+              var catTargets = new Set(expandCategoryTargets(target).map(function (x) { return x.toLowerCase(); }));
+
+              for (var i = 0; i < results.length; i++) {
+                var r = results[i], props = r.properties || [], map = {};
+                for (var j = 0; j < props.length; j++) {
+                  var p = props[j];
+                  map[p.displayName] = norm(p.displayValue);
+                }
+
+                var nameVal = map['Name'] || '';
+                var catVal  = map['Category'] || '';
+                var famVal1 = map['Family'] || '';
+                var famVal2 = map['Family Name'] || '';
+                var typeVal = map['Type Name'] || '';
+
+                var reason = null;
+                var exact = false;
+                if (eqi(nameVal, target)) { exact = true; reason = 'name'; }
+                else if (catTargets.has(catVal.toLowerCase())) { exact = true; reason = 'category'; }
+                else if (eqi(famVal1, target)) { exact = true; reason = 'family'; }
+                else if (eqi(famVal2, target)) { exact = true; reason = 'family name'; }
+                else if (eqi(typeVal, target)) { exact = true; reason = 'type'; }
+
+                if (exact) {
+                  wanted.push(r.dbId);
+                  if (DEBUG_FILTER_VERBOSE) flog('Match', { dbId: r.dbId, name: nameVal, cat: catVal, fam: famVal1 || famVal2, type: typeVal, reason: reason });
+                } else if (DEBUG_FILTER_VERBOSE) {
+                  flog('No match', { dbId: r.dbId, name: nameVal, cat: catVal, fam: famVal1 || famVal2, type: typeVal });
+                }
+              }
+
+              flog('Exact match count:', wanted.length);
+              // Step 3, fallback to Name contains if no exact hits
+              if (wanted.length === 0) {
+                var fallbackCount = 0;
+    for (var k = 0; k < results.length; k++) {
+                  var rp = results[k].properties || [];
+                  for (var u = 0; u < rp.length; u++) {
+                    if (rp[u].displayName === 'Name') {
+                      var val = norm(rp[u].displayValue).toLowerCase();
+                      if (val.indexOf(target.toLowerCase()) !== -1) {
+                        wanted.push(results[k].dbId);
+                        fallbackCount++;
+      if (DEBUG_FILTER_VERBOSE) flog('Fallback match (Name contains)', { dbId: results[k].dbId, name: norm(rp[u].displayValue) });
+                      }
+                      break;
+                    }
+                  }
+                }
+                flog('Fallback (Name contains) match count:', fallbackCount);
+              }
+
+              if (wanted.length === 0) {
+                console.info('No elements match', target);
+                return;
+              }
+
+              // Isolate matches
+              viewer.clearThemingColors();
+              viewer.isolate(wanted);
+              viewer.fitToView(wanted);
+              console.info('Isolated', wanted.length, 'elements for', target);
+            },
+            function onPropsErr(e) {
+              console.error('getBulkProperties failed', e);
+            }
+          );
+        },
+        function onSearchErr(e) { console.error('search failed', e); },
+        ['Name', 'Category', 'Family', 'Family Name', 'Type Name']
+      );
+    }
+    // ---------- end filtering ----------
+  </script>
+</body>
+</html>
