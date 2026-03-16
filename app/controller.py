@@ -1,44 +1,73 @@
-import viktor as vkt
+from __future__ import annotations
+
 import textwrap
 
-from pathlib import Path
-from app.agent import dx_agent_sync
+import viktor as vkt
+
+from app.agent import viewer_agent_sync_stream
+from app.aec import get_model_context
+from app.state import clear_viewer_state, load_viewer_state
+
 
 class Parametrization(vkt.Parametrization):
-    input = vkt.Image(path="AppTiltle.png", align = "left", flex=90)
-    description = vkt.Text(textwrap.dedent(
-    """
-    **Welcome!** This app lets you chat with your Data Exchange in plain English. You can **get element properties**, **visualize your model**, **count, sum, and filter elements**, and even **create dashboards**—all by simply typing your question or request and getting instant results!
-    """),
-    flex=90)
-    chat = vkt.Chat("", method="call_llm")
+    intro = vkt.Text(
+        textwrap.dedent(
+            """
+            ## Revit Type Query
+
+            Select one Autodesk model, then use chat.
+
+            Examples:
+            - `show the model`
+            - `highlight Basic Wall`
+            - `highlight CL_W1`
+            """
+        )
+    )
+
+    autodesk_file = vkt.AutodeskFileField("Autodesk model", oauth2_integration="aps-integration-viktor")
+
+    chat = vkt.Chat("Ask the agent", method="call_llm")
+
 
 class Controller(vkt.Controller):
-    parametrization = Parametrization(width=45)
-    
+    parametrization = Parametrization(width=35)
+
     def call_llm(self, params, **kwargs) -> vkt.ChatResult | None:
-        """Multi-turn conversation between the user and the agent."""
-
-        conversation_history = params.chat.get_messages()
-        response: str = ""
-        if conversation_history:
-            response = dx_agent_sync(chat_history=conversation_history)
-        return vkt.ChatResult(conversation=params.chat, response=response)
-    
-    @vkt.WebView("Model Viewer", duration_guess=2)
-    def show_cad_model(self, params, **kwargs) -> vkt.WebView:
         if not params.chat:
-            entities = vkt.Storage().list(scope="entity")
-            for entity in entities:
-                if entity == "aps_view":
-                    vkt.Storage().delete("aps_view", scope="entity")
+            clear_viewer_state()
+            return None
 
-        try:
-            raw_html = vkt.Storage().get("aps_view", scope="entity").getvalue()
-            if isinstance(raw_html, (bytes, bytearray)):
-                raw_html = raw_html.decode("utf-8", errors="replace")
-            return vkt.WebResult(html=raw_html)
+        messages = params.chat.get_messages()
+        chat_history = [
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
+        ]
+        text_stream = viewer_agent_sync_stream(
+            chat_history=chat_history,
+            autodesk_file=params.autodesk_file,
+            show_tool_progress=True,
+        )
+        return vkt.ChatResult(conversation=params.chat, response=text_stream)
 
-        except Exception:
-            file_path = Path(__file__).parent / "views" / "BlankScene.html"
-            return vkt.WebResult.from_path(file_path=file_path)
+    @vkt.WebView("Viewer", duration_guess=30)
+    def show_cad_model(self, params, **kwargs) -> vkt.WebResult:
+        from aps_viewer_sdk import APSViewer
+        if not params.chat:
+            clear_viewer_state()
+
+        context = get_model_context(params.autodesk_file)
+        viewer = APSViewer(
+            urn=context.version_urn,
+            token=context.token,
+            views_selector=True,
+        )
+
+        viewer_state = load_viewer_state()
+        if (
+            viewer_state.version_urn == context.version_urn
+            and viewer_state.highlight_elements
+        ):
+            viewer.highlight_elements(viewer_state.highlight_elements)
+
+        return vkt.WebResult(html=viewer.write())
