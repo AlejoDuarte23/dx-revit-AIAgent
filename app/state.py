@@ -17,7 +17,7 @@ def load_viewer_state() -> ViewerState:
     import viktor as vkt
 
     try:
-        raw = vkt.Storage().get(VIEWER_STATE_KEY, scope="user").getvalue()
+        raw = vkt.Storage().get(VIEWER_STATE_KEY, scope="entity").getvalue()
     except Exception:
         return ViewerState()
 
@@ -53,7 +53,7 @@ def save_highlight_state(version_urn: str, highlight_elements: list[dict[str, st
     vkt.Storage().set(
         VIEWER_STATE_KEY,
         data=vkt.File.from_data(json.dumps(payload).encode("utf-8")),
-        scope="user",
+        scope="entity",
     )
 
 
@@ -61,6 +61,6 @@ def clear_viewer_state() -> None:
     import viktor as vkt
 
     try:
-        vkt.Storage().delete(VIEWER_STATE_KEY, scope="user")
+        vkt.Storage().delete(VIEWER_STATE_KEY, scope="entity")
     except Exception:
         return
