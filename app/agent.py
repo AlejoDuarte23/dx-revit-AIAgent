@@ -98,6 +98,7 @@ def viewer_agent_sync_stream(
                     "If the user wants to clear or reset the current highlights, call `clear_highlight_tool`. "
                     "If the user asks for the AEC Data Model element group id of the selected model, call `get_element_group_id_tool`. "
                     "If the user wants to highlight, find, or isolate one Revit type, call `highlight_type_tool`. "
+                    "If the user wants to highlight all instances of a family (without filtering by type), call `highlight_family_tool`. "
                     "Treat the AEC Data Model property `Element Name` as the proxy for type name. "
                     "When the user gives both a family and a type, pass both. "
                     "Only support one type at a time. If the user asks for multiple types, ask them to pick one. "

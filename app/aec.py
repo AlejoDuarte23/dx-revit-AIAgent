@@ -191,6 +191,59 @@ def find_elements_by_element_name(
     return [element for element in filtered_results if external_element_id(element)]
 
 
+def fetch_elements_by_family(
+    context: ModelContext,
+    *,
+    family_name: str,
+    page_size: int = 200,
+) -> list[dict[str, Any]]:
+    """Fetch all instances of a family without type filtering."""
+    results: list[dict[str, Any]] = []
+    cursor: str | None = None
+    rsql_parts = [
+        f"{property_lhs(ELEMENT_CONTEXT_PROPERTY)}==Instance",
+        f"{property_lhs(FAMILY_NAME_PROPERTY)}=={quote_filter_value(family_name)}",
+    ]
+    rsql_filter = " and ".join(rsql_parts)
+
+    while True:
+        variables = {
+            "elementGroupId": context.element_group_id,
+            "rsqlFilter": rsql_filter,
+            "pagination": {
+                "limit": page_size,
+                "cursor": cursor,
+            },
+        }
+        data = execute_aec_graphql_query(
+            ELEMENTS_BY_TYPE_QUERY,
+            token=context.token,
+            region=context.region,
+            variables=variables,
+        )
+        page_results, cursor = elements_page(data)
+        results.extend(page_results)
+        if not cursor:
+            break
+
+    return results
+
+
+def find_elements_by_family(
+    context: ModelContext,
+    family_name: str,
+) -> list[dict[str, Any]]:
+    """Find all instances of a family."""
+    try:
+        filtered_results = fetch_elements_by_family(
+            context,
+            family_name=family_name,
+        )
+    except Exception:
+        return []
+    return [element for element in filtered_results if external_element_id(element)]
+
+
 def build_highlight_payload(
     elements: list[dict[str, Any]],
     color: str = DEFAULT_HIGHLIGHT_COLOR,

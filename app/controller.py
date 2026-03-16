@@ -9,45 +9,6 @@ from app.aec import get_model_context
 from app.state import clear_viewer_state, load_viewer_state
 
 
-def blank_view_html(message: str) -> str:
-    safe_message = (
-        message.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8" />
-        <title>APS Viewer</title>
-        <style>
-          body {{
-            margin: 0;
-            min-height: 100vh;
-            display: grid;
-            place-items: center;
-            background: #f7f3ea;
-            color: #22303c;
-            font-family: Georgia, serif;
-          }}
-          main {{
-            max-width: 36rem;
-            padding: 2rem;
-            text-align: center;
-            background: rgba(255, 255, 255, 0.9);
-            border: 1px solid #d8d0c0;
-            border-radius: 1rem;
-          }}
-        </style>
-      </head>
-      <body>
-        <main>{safe_message}</main>
-      </body>
-    </html>
-    """
-
-
 class Parametrization(vkt.Parametrization):
     intro = vkt.Text(
         textwrap.dedent(
@@ -74,15 +35,8 @@ class Controller(vkt.Controller):
 
     def call_llm(self, params, **kwargs) -> vkt.ChatResult | None:
         if not params.chat:
-            return None
-
-        autodesk_file = getattr(params, "autodesk_file", None)
-        if not autodesk_file:
             clear_viewer_state()
-            return vkt.ChatResult(
-                conversation=params.chat,
-                response="Select an Autodesk model first.",
-            )
+            return None
 
         messages = params.chat.get_messages()
         chat_history = [
@@ -91,21 +45,18 @@ class Controller(vkt.Controller):
         ]
         text_stream = viewer_agent_sync_stream(
             chat_history=chat_history,
-            autodesk_file=autodesk_file,
+            autodesk_file=params.autodesk_file,
             show_tool_progress=True,
         )
         return vkt.ChatResult(conversation=params.chat, response=text_stream)
 
-    @vkt.WebView("Viewer")
+    @vkt.WebView("Viewer", duration_guess=30)
     def show_cad_model(self, params, **kwargs) -> vkt.WebResult:
-        autodesk_file = getattr(params, "autodesk_file", None)
-        if not autodesk_file:
-            clear_viewer_state()
-            return vkt.WebResult(html=blank_view_html("Select an Autodesk model to open the viewer."))
-
         from aps_viewer_sdk import APSViewer
+        if not params.chat:
+            clear_viewer_state()
 
-        context = get_model_context(autodesk_file)
+        context = get_model_context(params.autodesk_file)
         viewer = APSViewer(
             urn=context.version_urn,
             token=context.token,
