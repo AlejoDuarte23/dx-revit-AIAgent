@@ -11,7 +11,9 @@ from agents import Agent, Runner, set_tracing_disabled
 from openai.types.responses import ResponseTextDeltaEvent
 
 from app.tools import TOOL_DISPLAY_NAMES, get_tools
+from dotenv import load_dotenv
 
+load_dotenv()
 
 @dataclass
 class AgentContext:

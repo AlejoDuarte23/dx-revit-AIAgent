@@ -1,7 +1,7 @@
 app_type = "simple"
 assets_path = "app/assets"
 python_version = "3.12"
-registered_name = "dx-revit-agent"
+registered_name = "aec-revit-agent"
 oauth2_integrations = [
   "aps-integration-viktor"
 ]

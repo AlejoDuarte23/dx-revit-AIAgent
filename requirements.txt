@@ -1,16 +1,7 @@
-viktor>=14.26.0,<15
+viktor
 python-dotenv>=1.1.0
 requests>=2.32.3
-httpx>=0.27.0
-pydantic==2.11.5
 python-dotenv
 openai>=2.25.0,<3
-numpy>=2.3.1
-openseespy==3.3.0.1
-kaleido==0.2.1; platform_system == "Linux"
-kaleido==0.1.0.post1; platform_system == "Windows"
-instructor==1.8.3
-plotly
-ifcopenshell
 openai-agents>=0.12.3,<0.13
-aps-viewer-sdk==0.1.1
+aps-viewer-sdk

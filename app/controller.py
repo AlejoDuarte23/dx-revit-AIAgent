@@ -63,8 +63,7 @@ class Parametrization(vkt.Parametrization):
         )
     )
 
-    model = vkt.Section("Model")
-    model.autodesk_file = vkt.AutodeskFileField("Autodesk model")
+    autodesk_file = vkt.AutodeskFileField("Autodesk model", oauth2_integration="aps-integration-viktor")
 
     chat = vkt.Chat("Ask the agent", method="call_llm")
 
@@ -76,7 +75,7 @@ class Controller(vkt.Controller):
         if not params.chat:
             return None
 
-        autodesk_file = getattr(getattr(params, "model", None), "autodesk_file", None)
+        autodesk_file = getattr(params, "autodesk_file", None)
         if not autodesk_file:
             clear_viewer_html()
             return vkt.ChatResult(
@@ -96,9 +95,9 @@ class Controller(vkt.Controller):
         )
         return vkt.ChatResult(conversation=params.chat, response=text_stream)
 
-    @vkt.WebView("Viewer", duration_guess=5)
+    @vkt.WebView("Viewer")
     def show_cad_model(self, params, **kwargs) -> vkt.WebResult:
-        autodesk_file = getattr(getattr(params, "model", None), "autodesk_file", None)
+        autodesk_file = getattr(params, "model", None)
         if not params.chat or not autodesk_file:
             clear_viewer_html()
             return vkt.WebResult(html=blank_view_html("Select an Autodesk model, then ask the agent to show or highlight it."))
