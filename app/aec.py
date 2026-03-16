@@ -59,13 +59,18 @@ def get_model_context(autodesk_file: Any) -> ModelContext:
     token = get_token()
     region = autodesk_file.get_region(token)
     version = autodesk_file.get_latest_version(token)
-    element_group_id = autodesk_file.get_aec_data_model_element_group_id(token)
+    element_group_id = get_element_group_id(autodesk_file, token=token)
     return ModelContext(
         token=token,
         region=region,
         version_urn=version.urn,
         element_group_id=element_group_id,
     )
+
+
+def get_element_group_id(autodesk_file: Any, *, token: str | None = None) -> str:
+    access_token = token or get_token()
+    return str(autodesk_file.get_aec_data_model_element_group_id(access_token))
 
 
 def execute_aec_graphql_query(
