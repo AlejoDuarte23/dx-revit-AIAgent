@@ -1,44 +1,110 @@
-import viktor as vkt
+from __future__ import annotations
+
 import textwrap
 
-from pathlib import Path
-from app.agent import dx_agent_sync
+import viktor as vkt
+
+from app.agent import viewer_agent_sync_stream
+from app.state import clear_viewer_html, load_viewer_html
+
+
+def blank_view_html(message: str) -> str:
+    safe_message = (
+        message.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>APS Viewer</title>
+        <style>
+          body {{
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            background: #f7f3ea;
+            color: #22303c;
+            font-family: Georgia, serif;
+          }}
+          main {{
+            max-width: 36rem;
+            padding: 2rem;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid #d8d0c0;
+            border-radius: 1rem;
+          }}
+        </style>
+      </head>
+      <body>
+        <main>{safe_message}</main>
+      </body>
+    </html>
+    """
+
 
 class Parametrization(vkt.Parametrization):
-    input = vkt.Image(path="AppTiltle.png", align = "left", flex=90)
-    description = vkt.Text(textwrap.dedent(
-    """
-    **Welcome!** This app lets you chat with your Data Exchange in plain English. You can **get element properties**, **visualize your model**, **count, sum, and filter elements**, and even **create dashboards**—all by simply typing your question or request and getting instant results!
-    """),
-    flex=90)
-    chat = vkt.Chat("", method="call_llm")
+    intro = vkt.Text(
+        textwrap.dedent(
+            """
+            ## Revit Type Query
+
+            Select one Autodesk model, then use chat.
+
+            Examples:
+            - `show the model`
+            - `highlight Basic Wall`
+            - `highlight CL_W1`
+            """
+        )
+    )
+
+    model = vkt.Section("Model")
+    model.autodesk_file = vkt.AutodeskFileField("Autodesk model")
+
+    chat = vkt.Chat("Ask the agent", method="call_llm")
+
 
 class Controller(vkt.Controller):
-    parametrization = Parametrization(width=45)
-    
+    parametrization = Parametrization(width=35)
+
     def call_llm(self, params, **kwargs) -> vkt.ChatResult | None:
-        """Multi-turn conversation between the user and the agent."""
-
-        conversation_history = params.chat.get_messages()
-        response: str = ""
-        if conversation_history:
-            response = dx_agent_sync(chat_history=conversation_history)
-        return vkt.ChatResult(conversation=params.chat, response=response)
-    
-    @vkt.WebView("Model Viewer", duration_guess=2)
-    def show_cad_model(self, params, **kwargs) -> vkt.WebView:
         if not params.chat:
-            entities = vkt.Storage().list(scope="entity")
-            for entity in entities:
-                if entity == "aps_view":
-                    vkt.Storage().delete("aps_view", scope="entity")
+            return None
 
-        try:
-            raw_html = vkt.Storage().get("aps_view", scope="entity").getvalue()
-            if isinstance(raw_html, (bytes, bytearray)):
-                raw_html = raw_html.decode("utf-8", errors="replace")
-            return vkt.WebResult(html=raw_html)
+        autodesk_file = getattr(getattr(params, "model", None), "autodesk_file", None)
+        if not autodesk_file:
+            clear_viewer_html()
+            return vkt.ChatResult(
+                conversation=params.chat,
+                response="Select an Autodesk model first.",
+            )
 
-        except Exception:
-            file_path = Path(__file__).parent / "views" / "BlankScene.html"
-            return vkt.WebResult.from_path(file_path=file_path)
+        messages = params.chat.get_messages()
+        chat_history = [
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
+        ]
+        text_stream = viewer_agent_sync_stream(
+            chat_history=chat_history,
+            autodesk_file=autodesk_file,
+            show_tool_progress=True,
+        )
+        return vkt.ChatResult(conversation=params.chat, response=text_stream)
+
+    @vkt.WebView("Viewer", duration_guess=5)
+    def show_cad_model(self, params, **kwargs) -> vkt.WebResult:
+        autodesk_file = getattr(getattr(params, "model", None), "autodesk_file", None)
+        if not params.chat or not autodesk_file:
+            clear_viewer_html()
+            return vkt.WebResult(html=blank_view_html("Select an Autodesk model, then ask the agent to show or highlight it."))
+
+        html = load_viewer_html()
+        if html:
+            return vkt.WebResult(html=html)
+
+        return vkt.WebResult(html=blank_view_html("Ask the agent to show the model."))
