@@ -1,14 +1,20 @@
-from app.tools.tools import display_model_tool, highlight_type_tool
+from app.tools.tools import (
+    clear_highlight_tool,
+    get_element_group_id_tool,
+    highlight_type_tool,
+)
 
 
 TOOL_DISPLAY_NAMES = {
-    "display_model_tool": "Display model",
+    "clear_highlight_tool": "Clear highlight",
+    "get_element_group_id_tool": "Get element group id",
     "highlight_type_tool": "Highlight type",
 }
 
 
 def get_tools():
     return [
-        display_model_tool,
+        clear_highlight_tool,
+        get_element_group_id_tool,
         highlight_type_tool,
     ]

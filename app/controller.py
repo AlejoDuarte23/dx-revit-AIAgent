@@ -5,7 +5,8 @@ import textwrap
 import viktor as vkt
 
 from app.agent import viewer_agent_sync_stream
-from app.state import clear_viewer_html, load_viewer_html
+from app.aec import get_model_context
+from app.state import clear_viewer_state, load_viewer_state
 
 
 def blank_view_html(message: str) -> str:
@@ -77,7 +78,7 @@ class Controller(vkt.Controller):
 
         autodesk_file = getattr(params, "autodesk_file", None)
         if not autodesk_file:
-            clear_viewer_html()
+            clear_viewer_state()
             return vkt.ChatResult(
                 conversation=params.chat,
                 response="Select an Autodesk model first.",
@@ -97,13 +98,25 @@ class Controller(vkt.Controller):
 
     @vkt.WebView("Viewer")
     def show_cad_model(self, params, **kwargs) -> vkt.WebResult:
-        autodesk_file = getattr(params, "model", None)
-        if not params.chat or not autodesk_file:
-            clear_viewer_html()
-            return vkt.WebResult(html=blank_view_html("Select an Autodesk model, then ask the agent to show or highlight it."))
+        autodesk_file = getattr(params, "autodesk_file", None)
+        if not autodesk_file:
+            clear_viewer_state()
+            return vkt.WebResult(html=blank_view_html("Select an Autodesk model to open the viewer."))
 
-        html = load_viewer_html()
-        if html:
-            return vkt.WebResult(html=html)
+        from aps_viewer_sdk import APSViewer
 
-        return vkt.WebResult(html=blank_view_html("Ask the agent to show the model."))
+        context = get_model_context(autodesk_file)
+        viewer = APSViewer(
+            urn=context.version_urn,
+            token=context.token,
+            views_selector=True,
+        )
+
+        viewer_state = load_viewer_state()
+        if (
+            viewer_state.version_urn == context.version_urn
+            and viewer_state.highlight_elements
+        ):
+            viewer.highlight_elements(viewer_state.highlight_elements)
+
+        return vkt.WebResult(html=viewer.write())

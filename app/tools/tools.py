@@ -8,42 +8,33 @@ from app.aec import (
     find_elements_by_element_name,
     get_model_context,
 )
-from app.state import save_viewer_html
+from app.state import clear_viewer_state, save_highlight_state
 
 
-def get_autodesk_file(wrapper: RunContextWrapper) -> object | None:
+def require_autodesk_file(wrapper: RunContextWrapper) -> object:
+    import viktor as vkt
+
     context = getattr(wrapper, "context", None)
-    return getattr(context, "autodesk_file", None)
-
-
-def build_viewer_html(
-    *,
-    autodesk_file: object,
-    highlight_elements: list[dict[str, str]] | None = None,
-) -> str:
-    from aps_viewer_sdk import APSViewer
-
-    context = get_model_context(autodesk_file)
-    viewer = APSViewer(
-        urn=context.version_urn,
-        token=context.token,
-        views_selector=True,
-    )
-    if highlight_elements:
-        viewer.highlight_elements(highlight_elements)
-    return viewer.write()
+    autodesk_file = getattr(context, "autodesk_file", None)
+    if not autodesk_file:
+        raise vkt.UserError("Select an Autodesk model first.")
+    return autodesk_file
 
 
 @function_tool()
-def display_model_tool(wrapper: RunContextWrapper) -> str:
-    """Display the currently selected Autodesk model in the viewer panel."""
-    autodesk_file = get_autodesk_file(wrapper)
-    if not autodesk_file:
-        return "Select an Autodesk model first."
+def get_element_group_id_tool(wrapper: RunContextWrapper) -> str:
+    """Return the AEC Data Model element group id for the selected Autodesk model."""
+    autodesk_file = require_autodesk_file(wrapper)
+    context = get_model_context(autodesk_file)
+    return f"Element group id: {context.element_group_id}"
 
-    html = build_viewer_html(autodesk_file=autodesk_file)
-    save_viewer_html(html)
-    return "Model loaded in the viewer."
+
+@function_tool()
+def clear_highlight_tool(wrapper: RunContextWrapper) -> str:
+    """Clear the highlighted elements from the viewer state."""
+    require_autodesk_file(wrapper)
+    clear_viewer_state()
+    return "Cleared highlighted elements."
 
 
 @function_tool()
@@ -53,10 +44,7 @@ def highlight_type_tool(
     family_name: str | None = None,
 ) -> str:
     """Highlight one Revit type in the viewer. Query instances by `Element Context` == Instance, optional `Family Name`, and `Element Name`."""
-    autodesk_file = get_autodesk_file(wrapper)
-    if not autodesk_file:
-        return "Select an Autodesk model first."
-
+    autodesk_file = require_autodesk_file(wrapper)
     context = get_model_context(autodesk_file)
     elements = find_elements_by_element_name(
         context,
@@ -67,12 +55,7 @@ def highlight_type_tool(
         elements,
         color=DEFAULT_HIGHLIGHT_COLOR,
     )
-
-    html = build_viewer_html(
-        autodesk_file=autodesk_file,
-        highlight_elements=highlight_elements,
-    )
-    save_viewer_html(html)
+    save_highlight_state(context.version_urn, highlight_elements)
 
     if not highlight_elements:
         if family_name:
